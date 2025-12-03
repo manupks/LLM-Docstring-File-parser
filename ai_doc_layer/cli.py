@@ -7,13 +7,13 @@ from .code_parser import find_python_files, extract_functions_from_file
 from .diff_analyzer import get_changed_files, get_diff_text
 from .doc_generator import DocGenerator
 from .writer import inject_docstrings_into_file, write_module_markdown
-
+from .uml_generator import generate_repo_uml
+from .ask_cli import CodebaseAssistant
 
 @click.group()
 def cli():
     """AI Documentation Layer CLI."""
     pass
-
 
 @cli.command()
 @click.argument("repo", type=click.Path(exists=True, file_okay=False))
@@ -69,3 +69,29 @@ def summarize_last_commit(repo: str):
     diff_text = get_diff_text(repo_path)
     summary = doc_gen.generate_commit_summary(diff_text)
     click.echo(summary)
+
+@cli.command()
+@click.argument("repo", type=click.Path(exists=True, file_okay=False))
+@click.option("--out-dir", type=click.Path(), default=None, help="Where to write diagrams (default: ai_docs/diagrams)")
+@click.option("--no-render", is_flag=True, help="Do not render PNGs (only write DOT files).")
+def generate_uml(repo: str, out_dir: Optional[str], no_render: bool):
+    """Generate UML diagrams (DOT + PNG) for each module in the repo."""
+    repo_path = Path(repo).resolve()
+    docs_root = repo_path / "ai_docs"
+    out = Path(out_dir).resolve() if out_dir else docs_root / "diagrams"
+    click.echo(f"Generating UML diagrams into {out} ...")
+    generate_repo_uml(repo_path, out, render_png=(not no_render))
+    click.echo("UML generation completed.")
+
+@cli.command()
+@click.argument("repo", type=click.Path(exists=True, file_okay=False))
+@click.argument("question", type=str)
+@click.option("--top-k", type=int, default=4, help="How many top snippets to include in context.")
+def ask(repo: str, question: str, top_k: int):
+    """Query the codebase using the LLM + local retrieval."""
+    repo_path = Path(repo).resolve()
+    click.echo(f"Asking against {repo_path}: {question}")
+    assistant = CodebaseAssistant(repo_path)
+    resp = assistant.ask(question, top_k=top_k)
+    click.echo("\n---- Answer ----\n")
+    click.echo(resp)

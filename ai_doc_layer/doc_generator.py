@@ -8,59 +8,44 @@ from .llm_client import LLMClient
 
 def sanitize_docstring(raw: str) -> str:
     """
-    Convert model output into a safe, minimal triple-quoted docstring.
+    Cleans LLM output and ensures it becomes a proper, safe docstring.
     """
-    if raw is None:
-        raw = ""
+    if not raw:
+        return '"""TODO: add documentation."""'
 
-    raw = str(raw).strip()
+    text = raw.strip()
 
-    # If model returned code with """...""", keep only the inner content.
-    if '"""' in raw:
-        parts = raw.split('"""')
-        inner_chunks = [parts[i] for i in range(1, len(parts), 2)]
-        if inner_chunks:
-            raw = inner_chunks[0].strip()
+    # Remove markdown code blocks
+    text = text.replace("```", "").strip()
 
-    # Remove markdown fences and backticks (THIS MUST BE ONE LINE)
-    raw = raw.replace("```", "").strip()
-
-    # Drop lines that clearly look like code definitions
-    cleaned_lines = []
-    for ln in raw.splitlines():
-        s = ln.strip()
-        if s.startswith("def ") or s.startswith("class "):
-            continue
-        cleaned_lines.append(ln)
-    text = "\n".join(cleaned_lines).strip()
-
-    # If still too long, keep only first few lines.
-    lines = text.splitlines()
-    if len(lines) > 4:
-        lines = lines[:4]
-    text = "\n".join(lines).strip()
-
-    # Dedent to avoid weird indentation.
-    text = textwrap.dedent(text).strip()
-
-    # Remove very generic meta-text if it appears later in the string
-    bad_phrases = [
-        "valid Python triple-quoted",
-        "The output of the function is a valid",
-        "The function is designed to be used",
+    # Remove prompt echoes / self-references
+    forbidden_phrases = [
+        "Write a SHORT Python docstring",
+        "Write a short Python docstring",
+        "Explain:",
+        "Do NOT",
+        "Function code:",
+        "Function:",
     ]
-    for bp in bad_phrases:
-        if bp in text and "\n" in text:
-            text = text.splitlines()[0].strip()
-            break
+    for phrase in forbidden_phrases:
+        if phrase in text:
+            # Keep only first meaningful sentence
+            parts = text.split(".")
+            text = parts[-1].strip()
+    
+    # Ensure docstring is short (2–3 sentences max)
+    sentences = text.split(".")
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if len(sentences) > 3:
+        sentences = sentences[:3]
+    text = ". ".join(sentences)
 
-    # Ensure no inner triple quotes
-    text = text.replace('"""', "").strip()
-
+    # Fallback if empty
     if not text:
         text = "TODO: add documentation."
 
     return f'"""{text}"""'
+
 
 
 class DocGenerator:
@@ -69,23 +54,27 @@ class DocGenerator:
 
     def generate_docstring(self, func: FunctionInfo, file_path: Path) -> str:
         prompt = f"""
-You are an expert Python developer.
+        Write a short Python docstring (max 2–3 sentences) describing ONLY:
 
-Write a SHORT docstring for the following function from {file_path.name}.
+        - What the function does
+        - What important parameters mean
+        - What it returns (if applicable)
 
-STRICT RULES:
-- Output ONLY a valid Python triple-quoted docstring.
-- Do NOT include the function signature.
-- Do NOT explain what a docstring is.
-- Do NOT mention "valid Python triple-quoted string" or similar.
-- Just describe what the function does, its parameters and return value.
-- Keep it concise (1–3 sentences).
+        Do NOT copy these instructions.
 
-Function code:
-{func.code}
-"""
-        raw = self.llm.generate(prompt)
+        Function:
+        {func.code}
+        """
+
+
+        raw = self.llm.generate_with_cache(
+            prompt,
+            cache_key_extra={"file": file_path.name, "func": func.name},
+            extra_params={"max_new_tokens": 70}
+        )
+
         return sanitize_docstring(raw)
+
 
     def generate_commit_summary(self, diff_text: str) -> str:
         prompt = f"""

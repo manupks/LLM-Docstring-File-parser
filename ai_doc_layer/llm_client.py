@@ -1,14 +1,13 @@
-from typing import Dict, Any
-
+# llm_client.py
+from typing import Dict, Any, Optional
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from .config import LOCAL_MODEL_ID
-
+from .cache import load_from_cache, save_to_cache
 
 class LLMClient:
     """
-    Local HF model via transformers – no external API, fully free.
+    Local HF model with caching and optimized generation speed.
     """
 
     def __init__(self, model_id: str = LOCAL_MODEL_ID):
@@ -20,26 +19,46 @@ class LLMClient:
             device_map="auto" if torch.cuda.is_available() else None,
         )
 
-    def generate(self, prompt: str, extra_params: Dict[str, Any] | None = None) -> str:
-        params: Dict[str, Any] = {"max_new_tokens": 256, "temperature": 0.2}
+    def generate(self, prompt: str, extra_params: Optional[Dict[str, Any]] = None) -> str:
+        params = {
+            "max_new_tokens": 80,     # FAST
+            "temperature": 0.1,
+            "do_sample": False
+        }
+
         if extra_params:
             params.update(extra_params)
 
-        # Simple chat-style prompt template
         full_prompt = (
-            "You are an expert Python documentation assistant.\n"
-            "Given the user's request, answer clearly.\n\n"
+            "You are an expert Python documentation assistant. "
+            "Answer concisely and clearly.\n\n"
             f"User: {prompt}\nAssistant:"
         )
 
-        inputs = self.tokenizer(full_prompt, return_tensors="pt").to(self.model.device)
+        encoded = self.tokenizer(full_prompt, return_tensors="pt").to(self.model.device)
+
         with torch.no_grad():
             out = self.model.generate(
-                **inputs,
+                **encoded,
                 max_new_tokens=params["max_new_tokens"],
                 temperature=params["temperature"],
-                do_sample=False,
+                do_sample=params["do_sample"],
             )
+
         text = self.tokenizer.decode(out[0], skip_special_tokens=True)
-        # Return only the assistant part after the last "Assistant:"
         return text.split("Assistant:")[-1].strip()
+
+    def generate_with_cache(
+        self,
+        prompt: str,
+        cache_key_extra: Optional[Dict[str, Any]] = None,
+        extra_params: Optional[Dict[str, Any]] = None
+    ):
+        cached = load_from_cache(prompt, extra=cache_key_extra)
+        if cached:
+            return cached
+
+        resp = self.generate(prompt, extra_params=extra_params)
+
+        save_to_cache(prompt, resp, extra=cache_key_extra)
+        return resp

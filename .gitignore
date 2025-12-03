@@ -1,5 +1,6 @@
 # Ignore virtual environment (your 'nlp' folder)
 nlp/
+lib/
 
 # Python bytecode
 __pycache__/
